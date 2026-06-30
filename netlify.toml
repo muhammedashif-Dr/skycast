@@ -1,14 +1,16 @@
-# Netlify configuration file for monorepo React deployment
+# Robust Netlify build configuration running from the repository root
 
 [build]
-  # Tell Netlify that our React frontend is in the 'frontend' directory
-  base = "frontend"
+  # Build command: enters frontend folder, installs dependencies, and runs Vite build
+  command = "cd frontend && npm install && npm run build"
   
-  # Command to compile our React site
-  command = "npm run build"
-  
-  # Directory where Vite outputs the build files
-  publish = "dist"
+  # Publish directory: the compiled static folder relative to the repo root
+  publish = "frontend/dist"
+
+# Prevents API calls from falling back to index.html and throwing JSON doctype errors
+[[redirects]]
+  from = "/api/*"
+  status = 404
 
 # Redirect rule for Single Page Apps (SPA) to avoid 404 on page refresh
 [[redirects]]
