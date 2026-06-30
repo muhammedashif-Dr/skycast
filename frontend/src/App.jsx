@@ -13,6 +13,8 @@ const DEFAULT_CITY = {
   admin1: 'England'
 };
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -64,7 +66,7 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/weather/live?lat=${lat}&lon=${lon}`);
+      const response = await fetch(`${API_BASE}/api/weather/live?lat=${lat}&lon=${lon}`);
       if (!response.ok) {
         throw new Error('Failed to fetch live weather details');
       }
@@ -80,7 +82,7 @@ function App() {
   // Fetch Favorites
   const fetchFavorites = async () => {
     try {
-      const response = await fetch('/api/weather/favorites');
+      const response = await fetch(`${API_BASE}/api/weather/favorites`);
       if (response.ok) {
         const data = await response.json();
         setFavorites(data);
@@ -93,7 +95,7 @@ function App() {
   // Fetch History
   const fetchHistory = async () => {
     try {
-      const response = await fetch('/api/weather/history');
+      const response = await fetch(`${API_BASE}/api/weather/history`);
       if (response.ok) {
         const data = await response.json();
         setHistory(data);
@@ -120,7 +122,7 @@ function App() {
     setSearchLoading(true);
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/weather/search?q=${encodeURIComponent(value)}`);
+        const response = await fetch(`${API_BASE}/api/weather/search?q=${encodeURIComponent(value)}`);
         if (response.ok) {
           const data = await response.json();
           setSuggestions(data);
@@ -152,7 +154,7 @@ function App() {
 
     // Save to history in backend
     try {
-      await fetch('/api/weather/history', {
+      await fetch(`${API_BASE}/api/weather/history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(locationObj),
@@ -172,12 +174,12 @@ function App() {
     try {
       if (isFav) {
         // Remove favorite
-        await fetch(`/api/weather/favorites/${isFav._id}?lat=${selectedLocation.lat}&lon=${selectedLocation.lon}`, {
+        await fetch(`${API_BASE}/api/weather/favorites/${isFav._id}?lat=${selectedLocation.lat}&lon=${selectedLocation.lon}`, {
           method: 'DELETE',
         });
       } else {
         // Add favorite
-        await fetch('/api/weather/favorites', {
+        await fetch(`${API_BASE}/api/weather/favorites`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(selectedLocation),
@@ -192,7 +194,7 @@ function App() {
   // Remove favorite from sidebar button
   const handleRemoveFavorite = async (city) => {
     try {
-      await fetch(`/api/weather/favorites/${city._id}?lat=${city.lat}&lon=${city.lon}`, {
+      await fetch(`${API_BASE}/api/weather/favorites/${city._id}?lat=${city.lat}&lon=${city.lon}`, {
         method: 'DELETE',
       });
       fetchFavorites();
@@ -204,7 +206,7 @@ function App() {
   // Clear search history
   const handleClearHistory = async () => {
     try {
-      await fetch('/api/weather/history', {
+      await fetch(`${API_BASE}/api/weather/history`, {
         method: 'DELETE',
       });
       fetchHistory();
