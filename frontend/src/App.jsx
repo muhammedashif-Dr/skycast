@@ -13,8 +13,8 @@ const DEFAULT_CITY = {
   admin1: 'England'
 };
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
-const useLocalFallback = !import.meta.env.VITE_API_URL && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+const API_BASE = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== 'undefined' && import.meta.env.VITE_API_URL !== 'null') ? import.meta.env.VITE_API_URL : '';
+const useLocalFallback = !API_BASE && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,6 +26,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [isClientOnly, setIsClientOnly] = useState(useLocalFallback);
 
   const searchDebounceRef = useRef(null);
   const searchContainerRef = useRef(null);
@@ -35,7 +36,7 @@ function App() {
     fetchFavorites();
     fetchHistory();
     fetchWeather(DEFAULT_CITY.lat, DEFAULT_CITY.lon);
-  }, []);
+  }, [isClientOnly]); // Reload if mode shifts
 
   // Sync page body background class with current weather condition
   useEffect(() => {
@@ -62,21 +63,38 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const fetchWeatherDirect = async (lat, lon) => {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_sum&timezone=auto`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch weather from provider');
+    return await response.json();
+  };
+
   // Fetch weather data for coordinates
   const fetchWeather = async (lat, lon) => {
     setLoading(true);
     setError(null);
     try {
       let data;
-      if (useLocalFallback) {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_sum&timezone=auto`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to fetch weather from provider');
-        data = await response.json();
+      if (isClientOnly) {
+        data = await fetchWeatherDirect(lat, lon);
       } else {
-        const response = await fetch(`${API_BASE}/api/weather/live?lat=${lat}&lon=${lon}`);
-        if (!response.ok) throw new Error('Failed to fetch live weather details');
-        data = await response.json();
+        try {
+          const response = await fetch(`${API_BASE}/api/weather/live?lat=${lat}&lon=${lon}`);
+          if (!response.ok) throw new Error('Backend returned status ' + response.status);
+          
+          // Verify response content-type is json
+          const contentType = response.headers.get('content-type');
+          if (contentType && !contentType.includes('application/json')) {
+            throw new Error('Non-JSON response from backend (HTML rewrite caught)');
+          }
+
+          data = await response.json();
+        } catch (backendErr) {
+          console.warn('Backend fetch failed, activating self-healing client fallback:', backendErr.message);
+          setIsClientOnly(true);
+          data = await fetchWeatherDirect(lat, lon);
+        }
       }
       setWeatherData(data);
     } catch (err) {
@@ -89,14 +107,22 @@ function App() {
   // Fetch Favorites
   const fetchFavorites = async () => {
     try {
-      if (useLocalFallback) {
+      if (isClientOnly) {
         const localFavs = JSON.parse(localStorage.getItem('aether_favorites') || '[]');
         setFavorites(localFavs);
       } else {
-        const response = await fetch(`${API_BASE}/api/weather/favorites`);
-        if (response.ok) {
+        try {
+          const response = await fetch(`${API_BASE}/api/weather/favorites`);
+          if (!response.ok) throw new Error();
+          
+          const contentType = response.headers.get('content-type');
+          if (contentType && !contentType.includes('application/json')) throw new Error();
+
           const data = await response.json();
           setFavorites(data);
+        } catch (backendErr) {
+          const localFavs = JSON.parse(localStorage.getItem('aether_favorites') || '[]');
+          setFavorites(localFavs);
         }
       }
     } catch (err) {
@@ -107,14 +133,22 @@ function App() {
   // Fetch History
   const fetchHistory = async () => {
     try {
-      if (useLocalFallback) {
+      if (isClientOnly) {
         const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
         setHistory(localHistory);
       } else {
-        const response = await fetch(`${API_BASE}/api/weather/history`);
-        if (response.ok) {
+        try {
+          const response = await fetch(`${API_BASE}/api/weather/history`);
+          if (!response.ok) throw new Error();
+
+          const contentType = response.headers.get('content-type');
+          if (contentType && !contentType.includes('application/json')) throw new Error();
+
           const data = await response.json();
           setHistory(data);
+        } catch (backendErr) {
+          const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
+          setHistory(localHistory);
         }
       }
     } catch (err) {
@@ -140,7 +174,7 @@ function App() {
     searchDebounceRef.current = setTimeout(async () => {
       try {
         let data;
-        if (useLocalFallback) {
+        if (isClientOnly) {
           const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(value)}&count=5&language=en&format=json`;
           const response = await fetch(url);
           if (response.ok) {
@@ -150,11 +184,24 @@ function App() {
             data = [];
           }
         } else {
-          const response = await fetch(`${API_BASE}/api/weather/search?q=${encodeURIComponent(value)}`);
-          if (response.ok) {
+          try {
+            const response = await fetch(`${API_BASE}/api/weather/search?q=${encodeURIComponent(value)}`);
+            if (!response.ok) throw new Error();
+
+            const contentType = response.headers.get('content-type');
+            if (contentType && !contentType.includes('application/json')) throw new Error();
+
             data = await response.json();
-          } else {
-            data = [];
+          } catch (backendErr) {
+            // Self-heal search immediately
+            const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(value)}&count=5&language=en&format=json`;
+            const response = await fetch(url);
+            if (response.ok) {
+              const resData = await response.json();
+              data = resData.results || [];
+            } else {
+              data = [];
+            }
           }
         }
         setSuggestions(data);
@@ -184,7 +231,7 @@ function App() {
     await fetchWeather(locationObj.lat, locationObj.lon);
 
     // Save to history
-    if (useLocalFallback) {
+    if (isClientOnly) {
       const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
       const filtered = localHistory.filter(item => !(Math.abs(item.lat - locationObj.lat) < 0.001 && Math.abs(item.lon - locationObj.lon) < 0.001));
       const updated = [{ ...locationObj, _id: `mem-his-${Date.now()}`, createdAt: new Date() }, ...filtered].slice(0, 10);
@@ -192,14 +239,25 @@ function App() {
       fetchHistory();
     } else {
       try {
-        await fetch(`${API_BASE}/api/weather/history`, {
+        const response = await fetch(`${API_BASE}/api/weather/history`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(locationObj),
         });
-        fetchHistory(); // Refresh history panel
+        
+        const contentType = response.headers.get('content-type');
+        if (response.ok && contentType && contentType.includes('application/json')) {
+          fetchHistory();
+        } else {
+          throw new Error();
+        }
       } catch (err) {
-        console.error('Failed to update history', err);
+        // Local fallback if write fails
+        const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
+        const filtered = localHistory.filter(item => !(Math.abs(item.lat - locationObj.lat) < 0.001 && Math.abs(item.lon - locationObj.lon) < 0.001));
+        const updated = [{ ...locationObj, _id: `mem-his-${Date.now()}`, createdAt: new Date() }, ...filtered].slice(0, 10);
+        localStorage.setItem('aether_history', JSON.stringify(updated));
+        fetchHistory();
       }
     }
   };
@@ -210,7 +268,7 @@ function App() {
       (f) => Math.abs(f.lat - selectedLocation.lat) < 0.001 && Math.abs(f.lon - selectedLocation.lon) < 0.001
     );
 
-    if (useLocalFallback) {
+    if (isClientOnly) {
       let updated;
       if (isFav) {
         updated = favorites.filter(f => f._id !== isFav._id);
@@ -224,28 +282,42 @@ function App() {
     }
 
     try {
+      let response;
       if (isFav) {
-        // Remove favorite
-        await fetch(`${API_BASE}/api/weather/favorites/${isFav._id}?lat=${selectedLocation.lat}&lon=${selectedLocation.lon}`, {
+        response = await fetch(`${API_BASE}/api/weather/favorites/${isFav._id}?lat=${selectedLocation.lat}&lon=${selectedLocation.lon}`, {
           method: 'DELETE',
         });
       } else {
-        // Add favorite
-        await fetch(`${API_BASE}/api/weather/favorites`, {
+        response = await fetch(`${API_BASE}/api/weather/favorites`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(selectedLocation),
         });
       }
-      fetchFavorites(); // Refresh list
+
+      const contentType = response.headers.get('content-type');
+      if (response.ok && contentType && contentType.includes('application/json')) {
+        fetchFavorites();
+      } else {
+        throw new Error();
+      }
     } catch (err) {
-      console.error('Failed to toggle favorite', err);
+      // Local fallback on DB fail
+      let updated;
+      if (isFav) {
+        updated = favorites.filter(f => f._id !== isFav._id);
+      } else {
+        const newFav = { ...selectedLocation, _id: `mem-fav-${Date.now()}`, createdAt: new Date() };
+        updated = [newFav, ...favorites];
+      }
+      localStorage.setItem('aether_favorites', JSON.stringify(updated));
+      fetchFavorites();
     }
   };
 
   // Remove favorite from sidebar button
   const handleRemoveFavorite = async (city) => {
-    if (useLocalFallback) {
+    if (isClientOnly) {
       const updated = favorites.filter(f => f._id !== city._id);
       localStorage.setItem('aether_favorites', JSON.stringify(updated));
       fetchFavorites();
@@ -253,30 +325,45 @@ function App() {
     }
 
     try {
-      await fetch(`${API_BASE}/api/weather/favorites/${city._id}?lat=${city.lat}&lon=${city.lon}`, {
+      const response = await fetch(`${API_BASE}/api/weather/favorites/${city._id}?lat=${city.lat}&lon=${city.lon}`, {
         method: 'DELETE',
       });
-      fetchFavorites();
+      
+      const contentType = response.headers.get('content-type');
+      if (response.ok && contentType && contentType.includes('application/json')) {
+        fetchFavorites();
+      } else {
+        throw new Error();
+      }
     } catch (err) {
-      console.error('Failed to remove favorite', err);
+      const updated = favorites.filter(f => f._id !== city._id);
+      localStorage.setItem('aether_favorites', JSON.stringify(updated));
+      fetchFavorites();
     }
   };
 
   // Clear search history
   const handleClearHistory = async () => {
-    if (useLocalFallback) {
+    if (isClientOnly) {
       localStorage.removeItem('aether_history');
       fetchHistory();
       return;
     }
 
     try {
-      await fetch(`${API_BASE}/api/weather/history`, {
+      const response = await fetch(`${API_BASE}/api/weather/history`, {
         method: 'DELETE',
       });
-      fetchHistory();
+      
+      const contentType = response.headers.get('content-type');
+      if (response.ok && contentType && contentType.includes('application/json')) {
+        fetchHistory();
+      } else {
+        throw new Error();
+      }
     } catch (err) {
-      console.error('Failed to clear search history', err);
+      localStorage.removeItem('aether_history');
+      fetchHistory();
     }
   };
 
