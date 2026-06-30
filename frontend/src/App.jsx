@@ -14,6 +14,7 @@ const DEFAULT_CITY = {
 };
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+const useLocalFallback = !import.meta.env.VITE_API_URL && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,11 +67,17 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/api/weather/live?lat=${lat}&lon=${lon}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch live weather details');
+      let data;
+      if (useLocalFallback) {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_sum&timezone=auto`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch weather from provider');
+        data = await response.json();
+      } else {
+        const response = await fetch(`${API_BASE}/api/weather/live?lat=${lat}&lon=${lon}`);
+        if (!response.ok) throw new Error('Failed to fetch live weather details');
+        data = await response.json();
       }
-      const data = await response.json();
       setWeatherData(data);
     } catch (err) {
       setError(err.message || 'Something went wrong fetching weather');
@@ -82,10 +89,15 @@ function App() {
   // Fetch Favorites
   const fetchFavorites = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/weather/favorites`);
-      if (response.ok) {
-        const data = await response.json();
-        setFavorites(data);
+      if (useLocalFallback) {
+        const localFavs = JSON.parse(localStorage.getItem('aether_favorites') || '[]');
+        setFavorites(localFavs);
+      } else {
+        const response = await fetch(`${API_BASE}/api/weather/favorites`);
+        if (response.ok) {
+          const data = await response.json();
+          setFavorites(data);
+        }
       }
     } catch (err) {
       console.error('Failed to load favorites list', err);
@@ -95,10 +107,15 @@ function App() {
   // Fetch History
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/weather/history`);
-      if (response.ok) {
-        const data = await response.json();
-        setHistory(data);
+      if (useLocalFallback) {
+        const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
+        setHistory(localHistory);
+      } else {
+        const response = await fetch(`${API_BASE}/api/weather/history`);
+        if (response.ok) {
+          const data = await response.json();
+          setHistory(data);
+        }
       }
     } catch (err) {
       console.error('Failed to load history list', err);
@@ -122,11 +139,25 @@ function App() {
     setSearchLoading(true);
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/weather/search?q=${encodeURIComponent(value)}`);
-        if (response.ok) {
-          const data = await response.json();
-          setSuggestions(data);
+        let data;
+        if (useLocalFallback) {
+          const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(value)}&count=5&language=en&format=json`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const resData = await response.json();
+            data = resData.results || [];
+          } else {
+            data = [];
+          }
+        } else {
+          const response = await fetch(`${API_BASE}/api/weather/search?q=${encodeURIComponent(value)}`);
+          if (response.ok) {
+            data = await response.json();
+          } else {
+            data = [];
+          }
         }
+        setSuggestions(data);
       } catch (err) {
         console.error('Error fetching suggestions', err);
       } finally {
@@ -152,16 +183,24 @@ function App() {
     // Fetch new weather
     await fetchWeather(locationObj.lat, locationObj.lon);
 
-    // Save to history in backend
-    try {
-      await fetch(`${API_BASE}/api/weather/history`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(locationObj),
-      });
-      fetchHistory(); // Refresh history panel
-    } catch (err) {
-      console.error('Failed to update history', err);
+    // Save to history
+    if (useLocalFallback) {
+      const localHistory = JSON.parse(localStorage.getItem('aether_history') || '[]');
+      const filtered = localHistory.filter(item => !(Math.abs(item.lat - locationObj.lat) < 0.001 && Math.abs(item.lon - locationObj.lon) < 0.001));
+      const updated = [{ ...locationObj, _id: `mem-his-${Date.now()}`, createdAt: new Date() }, ...filtered].slice(0, 10);
+      localStorage.setItem('aether_history', JSON.stringify(updated));
+      fetchHistory();
+    } else {
+      try {
+        await fetch(`${API_BASE}/api/weather/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(locationObj),
+        });
+        fetchHistory(); // Refresh history panel
+      } catch (err) {
+        console.error('Failed to update history', err);
+      }
     }
   };
 
@@ -170,6 +209,19 @@ function App() {
     const isFav = favorites.find(
       (f) => Math.abs(f.lat - selectedLocation.lat) < 0.001 && Math.abs(f.lon - selectedLocation.lon) < 0.001
     );
+
+    if (useLocalFallback) {
+      let updated;
+      if (isFav) {
+        updated = favorites.filter(f => f._id !== isFav._id);
+      } else {
+        const newFav = { ...selectedLocation, _id: `mem-fav-${Date.now()}`, createdAt: new Date() };
+        updated = [newFav, ...favorites];
+      }
+      localStorage.setItem('aether_favorites', JSON.stringify(updated));
+      fetchFavorites();
+      return;
+    }
 
     try {
       if (isFav) {
@@ -193,6 +245,13 @@ function App() {
 
   // Remove favorite from sidebar button
   const handleRemoveFavorite = async (city) => {
+    if (useLocalFallback) {
+      const updated = favorites.filter(f => f._id !== city._id);
+      localStorage.setItem('aether_favorites', JSON.stringify(updated));
+      fetchFavorites();
+      return;
+    }
+
     try {
       await fetch(`${API_BASE}/api/weather/favorites/${city._id}?lat=${city.lat}&lon=${city.lon}`, {
         method: 'DELETE',
@@ -205,6 +264,12 @@ function App() {
 
   // Clear search history
   const handleClearHistory = async () => {
+    if (useLocalFallback) {
+      localStorage.removeItem('aether_history');
+      fetchHistory();
+      return;
+    }
+
     try {
       await fetch(`${API_BASE}/api/weather/history`, {
         method: 'DELETE',

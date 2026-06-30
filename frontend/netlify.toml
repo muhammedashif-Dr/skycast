@@ -1,0 +1,19 @@
+# Netlify configuration file for when the base directory is set to 'frontend'
+
+[build]
+  # Build command (executed inside 'frontend' directory)
+  command = "npm run build"
+  
+  # Publish directory (dist folder inside 'frontend')
+  publish = "dist"
+
+# Prevents API calls from falling back to index.html and throwing JSON doctype errors
+[[redirects]]
+  from = "/api/*"
+  status = 404
+
+# Redirect rule for Single Page Apps (SPA) to avoid 404 on page refresh
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
